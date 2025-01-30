@@ -3,7 +3,7 @@ use std::iter;
 
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event;
-use ggez::graphics::{self, Color, DrawParam, Drawable, Image};
+use ggez::graphics::{self, Color, DrawParam, Image};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
 use ggez::{Context, GameResult};
@@ -95,7 +95,7 @@ struct Bullet {
 impl Bullet {
     fn draw_param(&self) -> DrawParam {
         self.obj.draw_param()
-            .color(opacity(self.ttl.min(1.)))
+            .color(opacity(self.ttl.min(5.) * 2.))
     }
 }
 
@@ -111,6 +111,8 @@ struct MainState {
     splinter_img: Image,
 
     crate_spawn_time: f32,
+
+    bounce_edge: bool,
 }
 
 impl MainState {
@@ -125,12 +127,13 @@ impl MainState {
             crate_img: Image::from_path(ctx, "/crate.png").unwrap(),
             bullet_img: Image::from_path(ctx, "/bullet.png").unwrap(),
             splinter_img: Image::from_path(ctx, "/splinter.png").unwrap(),
+            bounce_edge: false,
         };
         Ok(s)
     }
 }
 
-const CRATE_LIMIT: usize = 1000;
+const CRATE_LIMIT: usize = 200;
 
 const ROT_SPEED: f32 = 5.53;
 const ACCELERATION: f32 = 150.;
@@ -145,7 +148,7 @@ pub fn angle_to_vec(angle: f32) -> Vec2 {
 
 impl event::EventHandler<ggez::GameError> for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        if self.crate_spawn_time <= 0. && self.crates.len() < CRATE_LIMIT {
+        if self.crate_spawn_time <= 0. {
             let x = rand::random_range(0. .. WIDTH);
             let y = rand::random_range(0. .. HEIGHT);
             
@@ -165,7 +168,9 @@ impl event::EventHandler<ggez::GameError> for MainState {
 
         const DELTA: f32 = 1./60.;
         if ctx.time.check_update_time(60) {
-            self.crate_spawn_time -= DELTA;
+            if self.crates.len() < CRATE_LIMIT {
+                self.crate_spawn_time -= DELTA;
+            }
 
             let mut deads = Vec::new();
             for (i, bullet) in self.bullets.iter_mut().enumerate() {
@@ -187,6 +192,12 @@ impl event::EventHandler<ggez::GameError> for MainState {
                 let dir = angle_to_vec(self.ship.rot);
                 let obj = Obj::from(self.ship.pos + dir * 20., self.ship.vel + dir * BULLET_SPEED, self.ship.rot);
                 self.bullets.push(obj.bullet(rand::random_range(4.5 .. 6.2)));
+            }
+            if ctx.keyboard.is_key_just_pressed(KeyCode::C) {
+                self.crate_spawn_time -= CRATE_SPAWN_RATE;
+            }
+            if ctx.keyboard.is_key_just_pressed(KeyCode::B) {
+                self.bounce_edge = !self.bounce_edge;
             }
 
             if ctx.keyboard.is_key_pressed(KeyCode::A) {
@@ -230,8 +241,22 @@ impl event::EventHandler<ggez::GameError> for MainState {
         for obj in iter {
             obj.pos += obj.vel * DELTA;
             obj.rot += obj.rot_v * DELTA;
-            obj.pos.x = obj.pos.x.rem_euclid(WIDTH);
-            obj.pos.y = obj.pos.y.rem_euclid(HEIGHT);
+            if self.bounce_edge {
+                const W: f32 = 16.;
+                if obj.pos.x < W {
+                    obj.vel.x = obj.vel.x.abs();
+                } else if obj.pos.x >= (WIDTH-W) {
+                    obj.vel.x = -obj.vel.x.abs();
+                }
+                if obj.pos.y < W {
+                    obj.vel.y = obj.vel.y.abs();
+                } else if obj.pos.y >= (HEIGHT-W) {
+                    obj.vel.y = -obj.vel.y.abs();
+                }
+            } else {
+                obj.pos.x = obj.pos.x.rem_euclid(WIDTH);
+                obj.pos.y = obj.pos.y.rem_euclid(HEIGHT);
+            }
         }
 
         let mut dead_bullets = Vec::new();
