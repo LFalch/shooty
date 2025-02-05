@@ -3,7 +3,7 @@ use std::iter;
 
 use ggez::conf::{WindowMode, WindowSetup};
 use ggez::event;
-use ggez::graphics::{self, Color, DrawParam, Image};
+use ggez::graphics::{self, Color, DrawParam, Image, Mesh};
 use ggez::input::keyboard::KeyCode;
 use ggez::mint::Point2;
 use ggez::{Context, GameResult};
@@ -17,6 +17,8 @@ struct Obj {
     vel: Vec2,
     rot: f32,
     rot_v: f32,
+    #[cfg(feature = "gravity")]
+    grav_accel: Vec2,
 }
 
 impl Obj {
@@ -26,6 +28,8 @@ impl Obj {
             vel: Vec2::ZERO,
             rot: 0.,
             rot_v: 0.,
+            #[cfg(feature = "gravity")]
+            grav_accel: Vec2::ZERO,
         }
     }
     pub const fn from(pos: Vec2, vel: Vec2, rot: f32) -> Self {
@@ -34,6 +38,8 @@ impl Obj {
             vel,
             rot,
             rot_v: 0.,
+            #[cfg(feature = "gravity")]
+            grav_accel: Vec2::ZERO
         }
     }
     pub const fn with(x: f32, y: f32, vx: f32, vy: f32, rot: f32, rot_v: f32) -> Self {
@@ -42,6 +48,8 @@ impl Obj {
             vel: Vec2::new(vx, vy),
             rot,
             rot_v,
+            #[cfg(feature = "gravity")]
+            grav_accel: Vec2::ZERO
         }
     }
     fn draw_param(&self) -> DrawParam {
@@ -64,15 +72,26 @@ impl Obj {
             vel: self.vel + Vec2::new(dvx, dvy),
             rot: self.rot + rand::random_range(0. .. TAU),
             rot_v: self.rot_v + rand::random_range(-3. .. 3.),
+            #[cfg(feature = "gravity")]
+            grav_accel: self.grav_accel,
         }
     }
     fn resolve(&mut self, other: &mut Self) {
         let a = self;
         let b = other;
 
-        const W: f32 = 32.;
         let d = a.pos - b.pos;
         let dist_sq = d.length_squared();
+
+        #[cfg(feature = "gravity")]
+        {
+            a.vel -= GRAVITY_CONSTANT / dist_sq * d.normalize();
+            a.grav_accel -= GRAVITY_CONSTANT / dist_sq * d.normalize();
+            b.vel += GRAVITY_CONSTANT / dist_sq * d.normalize();
+            b.grav_accel += GRAVITY_CONSTANT / dist_sq * d.normalize();
+        }
+
+        const W: f32 = 32.;
         if dist_sq < W * W {
             let dv = (a.vel - b.vel).dot(d) / dist_sq * d;
             a.vel -= dv;
@@ -113,6 +132,7 @@ struct MainState {
     crate_spawn_time: f32,
 
     bounce_edge: bool,
+    show_vel: bool,
 }
 
 impl MainState {
@@ -128,6 +148,7 @@ impl MainState {
             bullet_img: Image::from_path(ctx, "/bullet.png").unwrap(),
             splinter_img: Image::from_path(ctx, "/splinter.png").unwrap(),
             bounce_edge: false,
+            show_vel: false,
         };
         Ok(s)
     }
@@ -140,6 +161,8 @@ const ACCELERATION: f32 = 150.;
 const CRATE_SPAWN_RATE: f32 = 0.65;
 const BULLET_SPEED: f32 = 470.;
 const CRATE_BULLET_COLLIDE_DIST: f32 = 16.+8.;
+#[cfg(feature = "gravity")]
+const GRAVITY_CONSTANT: f32 = 6.6743e-11 * 104e12 * 2.;
 
 pub fn angle_to_vec(angle: f32) -> Vec2 {
     let (sin, cos) = angle.sin_cos();
@@ -199,6 +222,9 @@ impl event::EventHandler<ggez::GameError> for MainState {
             if ctx.keyboard.is_key_just_pressed(KeyCode::B) {
                 self.bounce_edge = !self.bounce_edge;
             }
+            if ctx.keyboard.is_key_just_pressed(KeyCode::V) {
+                self.show_vel = !self.show_vel;
+            }
 
             if ctx.keyboard.is_key_pressed(KeyCode::A) {
                 self.ship.rot -= ROT_SPEED * DELTA;
@@ -239,6 +265,10 @@ impl event::EventHandler<ggez::GameError> for MainState {
             .chain(&mut self.crates)
             .chain(self.splinters.iter_mut().map(|b| &mut b.obj));
         for obj in iter {
+            #[cfg(feature = "gravity")]
+            {
+                obj.grav_accel = Vec2::ZERO;
+            }
             obj.pos += obj.vel * DELTA;
             obj.rot += obj.rot_v * DELTA;
             if self.bounce_edge {
@@ -264,7 +294,7 @@ impl event::EventHandler<ggez::GameError> for MainState {
             let mut dead = None;
             for (c, crat) in self.crates.iter().enumerate() {
                 let dist = bullet.obj.pos - crat.pos;
-                if dist.length_squared() < CRATE_BULLET_COLLIDE_DIST * CRATE_BULLET_COLLIDE_DIST {
+                    if dist.length_squared() < CRATE_BULLET_COLLIDE_DIST * CRATE_BULLET_COLLIDE_DIST {
                     dead = Some(c);
                     break;
                 }
@@ -298,6 +328,14 @@ impl event::EventHandler<ggez::GameError> for MainState {
         }
         for craet in &self.crates {
             canvas.draw(&self.crate_img, craet.draw_param());
+            if self.show_vel {
+                let line = Mesh::new_line(ctx, &[craet.pos, craet.pos + craet.vel], 2., Color::BLUE)?;
+                canvas.draw(&line, DrawParam::new());
+                #[cfg(feature = "gravity")] {
+                    let grav_line = Mesh::new_line(ctx, &[craet.pos + craet.vel, craet.pos + craet.vel + craet.grav_accel], 2., Color::GREEN)?;
+                    canvas.draw(&grav_line, DrawParam::new());
+                }
+            }
         }
         for splinter in &self.splinters {
             canvas.draw(&self.splinter_img, splinter.draw_param());
